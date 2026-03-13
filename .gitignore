@@ -3,3 +3,6 @@ venv/
 .env/
 .venv/
 env/
+
+# Ignore calibration sample data
+calibration/samples/
