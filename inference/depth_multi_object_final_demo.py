@@ -17,20 +17,15 @@ import cv2
 import torch
 import numpy as np
 
-# ---------------------------
+ 
 # CONFIG
-# ---------------------------
-
 CALIB_FILE = Path("calibration/calib_params.json")
 OBSTACLE_THRESHOLD = 0.7
 YOLO_MODEL = "yolov5s"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ---------------------------
 # LOAD CALIBRATION
-# ---------------------------
-
 if not CALIB_FILE.exists():
     raise FileNotFoundError("Calibration file not found")
 
@@ -42,10 +37,8 @@ b = calib["b"]
 
 print("Calibration loaded:", calib)
 
-# ---------------------------
+ 
 # LOAD MIDAS
-# ---------------------------
-
 print("Loading MiDaS...")
 
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
@@ -55,20 +48,16 @@ midas.eval()
 midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
 transform = midas_transforms.small_transform
 
-# ---------------------------
+ 
 # LOAD YOLO
-# ---------------------------
-
 print("Loading YOLO detector...")
 
 yolo = torch.hub.load("ultralytics/yolov5", YOLO_MODEL, pretrained=True)
 yolo.to(DEVICE)
 yolo.eval()
 
-# ---------------------------
+ 
 # WEBCAM
-# ---------------------------
-
 cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
@@ -76,18 +65,13 @@ if not cap.isOpened():
 
 print("Press Q to quit")
 
-# ---------------------------
+ 
 # DISTANCE MEMORY
-# ---------------------------
-
 distance_memory = {}
 
 prev_time = time.time()
-
-# ---------------------------
+ 
 # LOOP
-# ---------------------------
-
 while True:
 
     ret, frame = cap.read()
@@ -96,10 +80,8 @@ while True:
 
     H, W = frame.shape[:2]
 
-    # -----------------------
+      
     # DEPTH ESTIMATION
-    # -----------------------
-
     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     input_batch = transform(img_rgb).to(DEVICE)
@@ -116,15 +98,12 @@ while True:
         ).squeeze().cpu().numpy()
 
     # visualization
-
     depth_vis = cv2.normalize(prediction, None, 0, 255, cv2.NORM_MINMAX)
     depth_vis = depth_vis.astype(np.uint8)
     depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_MAGMA)
 
-    # -----------------------
+      
     # OBJECT DETECTION
-    # -----------------------
-
     results = yolo(frame)
 
     detections = results.xyxy[0].cpu().numpy()
@@ -141,10 +120,8 @@ while True:
         x2 = int(min(W - 1, x2))
         y2 = int(min(H - 1, y2))
 
-        # -----------------------
+          
         # CENTER DEPTH SAMPLING
-        # -----------------------
-
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
 
@@ -163,16 +140,12 @@ while True:
         else:
             obj_pred = float(np.median(roi))
 
-        # -----------------------
+          
         # DISTANCE CONVERSION
-        # -----------------------
-
         distance_m = a * obj_pred + b
 
-        # -----------------------
+          
         # TEMPORAL SMOOTHING
-        # -----------------------
-
         key = f"{label}_{cx}_{cy}"
 
         if key in distance_memory:
@@ -187,16 +160,12 @@ while True:
             "distance": distance_m
         })
 
-    # -----------------------
+      
     # SORT NEAREST
-    # -----------------------
-
     objects = sorted(objects, key=lambda x: x["distance"])
 
-    # -----------------------
+      
     # DRAW OBJECTS
-    # -----------------------
-
     for i, obj in enumerate(objects):
 
         x1, y1, x2, y2 = obj["bbox"]
@@ -230,20 +199,16 @@ while True:
             2
         )
 
-    # -----------------------
+      
     # NEAREST OBJECT
-    # -----------------------
-
     if len(objects) > 0:
         nearest = objects[0]
         info = f"Nearest: {nearest['label']} {nearest['distance']:.2f} m"
     else:
         info = "Nearest: -"
 
-    # -----------------------
+      
     # FPS
-    # -----------------------
-
     curr = time.time()
     fps = 1.0 / (curr - prev_time)
     prev_time = curr
@@ -254,10 +219,8 @@ while True:
     cv2.putText(frame, f"FPS: {fps:.1f}", (10, H - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
 
-    # -----------------------
+      
     # COMBINE VIEW
-    # -----------------------
-
     depth_vis = cv2.resize(depth_vis, (W, H))
 
     combined = np.hstack((frame, depth_vis))
@@ -268,8 +231,6 @@ while True:
 
     if key == ord("q"):
         break
-
-# ---------------------------
 
 cap.release()
 cv2.destroyAllWindows()
