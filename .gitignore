@@ -1,8 +1,30 @@
-# Virtual environment
+#  Python & Virtual Environment 
 venv/
 .env/
 .venv/
 env/
+__pycache__/
+*.py[cod]
+*$py.class
 
-# Ignore calibration sample data
+#  Large Datasets (WAJIB: Agar file 2.8GB tidak di-upload) 
+dataset/
+*.mat
+*.h5
+*.npy
+
+#  AI Models (Weights) 
+# File .pt dan .tflite biasanya besar, lebih baik di-download manual
+models/*.pt
+models/*.tflite
+yolo26n.pt
+
+#  Calibration & Output 
 calibration/samples/
+calibration/*.png
+calibration/*.jpg
+
+#  IDE Settings 
+.vscode/
+.idea/
+.DS_Store
