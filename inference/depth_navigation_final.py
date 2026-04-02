@@ -4,59 +4,63 @@ import cv2
 import torch
 import numpy as np
 import json
+import time
 from pathlib import Path
 from ultralytics import YOLO
-
-# Fix Path agar bisa memanggil folder 'utils'
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from utils.viz import depth_to_colormap
 
 # --- CONFIG & CALIBRATION ---
 CALIB_FILE = Path("calibration/calib_params.json")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-STOP_THRESH = 0.8  # Meter
-SAFE_THRESH = 1.5  # Meter
+STOP_THRESH = 0.8  
+SAFE_THRESH = 1.5  
+ALPHA = 0.2  # Faktor kehalusan (0.1 = sangat halus, 0.9 = responsif tapi bergetar)
 
 def load_calibration():
     if not CALIB_FILE.exists():
-        raise FileNotFoundError("File kalibrasi tidak ditemukan! Jalankan auto_calibrate_nyu.py dulu.")
+        return 300.0, 1.0 
     with open(CALIB_FILE, "r") as f:
         data = json.load(f)
-    print(f"Loaded Calibration: {data['model']} (R2: {data['r2']:.4f})")
     return float(data["a"]), float(data["b"])
 
 a, b = load_calibration()
 
-# --- NAVIGATION DECISION ENGINE ---
+# --- INITIALIZE SMOOTHING ---
+# Menyimpan memori jarak agar tidak melompat
+smooth_dists = {"LEFT": 2.0, "CENTER": 2.0, "RIGHT": 2.0}
+
 def evaluate_navigation(zones):
-    """Logika navigasi berdasarkan jarak di 3 zona vertikal"""
-    if zones["CENTER"] < STOP_THRESH:
-        # Cari jalan keluar ke samping jika depan terblokir
-        if zones["LEFT"] > zones["RIGHT"] and zones["LEFT"] > SAFE_THRESH:
-            return "STOP - AMBIL KIRI", (0, 0, 255)
-        elif zones["RIGHT"] > zones["LEFT"] and zones["RIGHT"] > SAFE_THRESH:
-            return "STOP - AMBIL KANAN", (0, 0, 255)
+    """Logika navigasi yang lebih cerdas"""
+    c_dist = zones["CENTER"]
+    l_dist = zones["LEFT"]
+    r_dist = zones["RIGHT"]
+
+    if c_dist < STOP_THRESH:
+        if l_dist > r_dist and l_dist > SAFE_THRESH:
+            return "STOP - GESER KIRI", (0, 0, 255)
+        elif r_dist > l_dist and r_dist > SAFE_THRESH:
+            return "STOP - GESER KANAN", (0, 0, 255)
         else:
             return "STOP - JALAN TERBLOKIR", (0, 0, 255)
-    elif zones["CENTER"] < SAFE_THRESH:
+    elif c_dist < SAFE_THRESH:
         return "HATI-HATI - KURANGI KECEPATAN", (0, 255, 255)
     else:
         return "JALAN AMAN - MAJU", (0, 255, 0)
 
-# --- INITIALIZE MODELS ---
-print(f"Initializing YOLO26n & MiDaS on {DEVICE}...")
+# --- LOAD MODELS ---
 yolo = YOLO("yolo26n.pt").to(DEVICE)
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small").to(DEVICE).eval()
 transform = torch.hub.load("intel-isl/MiDaS", "transforms").small_transform
 
 cap = cv2.VideoCapture(0)
+cv2.namedWindow("Final Demo", cv2.WINDOW_NORMAL)
 
 while True:
+    start_time = time.time()
     ret, frame = cap.read()
     if not ret: break
     H, W = frame.shape[:2]
 
-    # 1. DEPTH ESTIMATION
+    # 1. Depth Estimation
     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     input_batch = transform(img_rgb).to(DEVICE)
     with torch.no_grad():
@@ -65,62 +69,59 @@ while True:
             prediction.unsqueeze(1), size=(H, W), mode="bicubic", align_corners=False
         ).squeeze().cpu().numpy()
 
-    # 2. OBJECT DETECTION (YOLO26 NMS-Free)
-    results = yolo(frame, verbose=False)[0]
-    detections = results.boxes.data.cpu().numpy() # [x1, y1, x2, y2, conf, cls]
-
-    # 3. ZONASI 3 BAGIAN (Menggunakan Formula Reciprocal)
+    # 2. Raw Zone Calculation
     w_third = W // 3
-    # Inisialisasi jarak berdasarkan median area (Background Safety)
-    zone_dists = {
+    raw_dists = {
         "LEFT": a * (1.0 / (np.median(prediction[:, :w_third]) + 1e-6)) + b,
         "CENTER": a * (1.0 / (np.median(prediction[:, w_third:2*w_third]) + 1e-6)) + b,
         "RIGHT": a * (1.0 / (np.median(prediction[:, 2*w_third:]) + 1e-6)) + b
     }
 
-    # 4. OVERWRITE DENGAN JARAK OBJEK TERDEKAT
+    # 3. YOLO Object Validation
+    results = yolo(frame, verbose=False)[0]
+    detections = results.boxes.data.cpu().numpy()
+
     for det in detections:
         x1, y1, x2, y2, conf, cls = det
-        label = results.names[int(cls)]
         cx = int((x1 + x2) / 2)
+        # Ambil area tengah objek saja (70% center) agar lebih akurat
+        bw, bh = x2 - x1, y2 - y1
+        roi = prediction[int(y1+bh*0.15):int(y2-bh*0.15), int(x1+bw*0.15):int(x2-bw*0.15)]
         
-        # Ambil median depth dari bounding box objek
-        roi = prediction[int(y1):int(y2), int(x1):int(x2)]
         if roi.size > 0:
-            # Hitung jarak objek dengan rumus reciprocal
             obj_dist = a * (1.0 / (np.median(roi) + 1e-6)) + b
-            
-            # Tentukan zona berdasarkan titik tengah objek
             zone = "LEFT" if cx < w_third else "CENTER" if cx < 2*w_third else "RIGHT"
+            if obj_dist < raw_dists[zone]:
+                raw_dists[zone] = obj_dist
             
-            # Jika objek lebih dekat dari background, gunakan jarak objek
-            if obj_dist < zone_dists[zone]:
-                zone_dists[zone] = obj_dist
+            # Draw YOLO info
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+            cv2.putText(frame, f"{results.names[int(cls)]} {obj_dist:.1f}m", (int(x1), int(y1)-10), 0, 0.5, (0, 255, 0), 2)
 
-            # Visualisasi Bounding Box Objek
-            color_box = (0, 0, 255) if obj_dist < STOP_THRESH else (0, 255, 0)
-            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color_box, 2)
-            cv2.putText(frame, f"{label} {obj_dist:.1f}m", (int(x1), int(y1)-10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_box, 2)
+    # 4. TEMPORAL SMOOTHING (Kunci agar demo bagus)
+    for z in smooth_dists:
+        smooth_dists[z] = (ALPHA * raw_dists[z]) + ((1 - ALPHA) * smooth_dists[z])
 
-    # 5. NAVIGATION DECISION
-    command, color = evaluate_navigation(zone_dists)
+    # 5. UI & Visualization
+    command, color = evaluate_navigation(smooth_dists)
+    fps = 1 / (time.time() - start_time)
 
-    # 6. VISUALISASI DEMO
-    # Garis pembatas zona
+    # Overlay
     cv2.line(frame, (w_third, 0), (w_third, H), (255, 255, 255), 1)
     cv2.line(frame, (2*w_third, 0), (2*w_third, H), (255, 255, 255), 1)
     
-    # Overlay Perintah (Latar Hitam)
-    cv2.rectangle(frame, (0, 0), (W, 60), (0, 0, 0), -1)
-    cv2.putText(frame, f"COMMAND: {command}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-    
-    # Label Jarak per Zona di bagian bawah
-    cv2.putText(frame, f"L:{zone_dists['LEFT']:.1f}m", (10, H-20), 0, 0.6, (255,255,255), 2)
-    cv2.putText(frame, f"C:{zone_dists['CENTER']:.1f}m", (w_third+10, H-20), 0, 0.6, (255,255,255), 2)
-    cv2.putText(frame, f"R:{zone_dists['RIGHT']:.1f}m", (2*w_third+10, H-20), 0, 0.6, (255,255,255), 2)
+    # Perintah Atas
+    cv2.rectangle(frame, (0, 0), (W, 70), (0, 0, 0), -1)
+    cv2.putText(frame, f"COMMAND: {command}", (20, 45), 0, 0.9, color, 3)
+    cv2.putText(frame, f"FPS: {fps:.1f}", (W-110, 45), 0, 0.6, (0, 255, 255), 2)
 
-    cv2.imshow("Final Prototype Navigation (YOLO26 + MiDaS)", frame)
+    # Status Bar Bawah
+    cv2.rectangle(frame, (0, H-40), (W, H), (30, 30, 30), -1)
+    cv2.putText(frame, f"L: {smooth_dists['LEFT']:.2f}m", (20, H-12), 0, 0.6, (255, 255, 255), 2)
+    cv2.putText(frame, f"C: {smooth_dists['CENTER']:.2f}m", (w_third+20, H-12), 0, 0.6, (255, 255, 255), 2)
+    cv2.putText(frame, f"R: {smooth_dists['RIGHT']:.2f}m", (2*w_third+20, H-12), 0, 0.6, (255, 255, 255), 2)
+
+    cv2.imshow("Final Demo", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
