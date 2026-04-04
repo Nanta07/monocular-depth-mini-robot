@@ -9,8 +9,8 @@ from ultralytics import YOLO
 # --- CONFIG & LOCAL PARAMS ---
 A_LOCAL = 281.39
 B_LOCAL = 0.16
-STOP_THRESH = 0.8  # Berhenti jika objek < 0.8 meter
-SAFE_THRESH = 1.5  # Hati-hati jika objek < 1.5 meter
+STOP_THRESH = 0.8
+SAFE_THRESH = 1.5
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -51,7 +51,7 @@ while True:
     dist_c = calculate_dist(prediction[roi_top:, w_third:2*w_third])
     dist_r = calculate_dist(prediction[roi_top:, 2*w_third:])
 
-    # 3. DETEKSI OBJEK (YOLO)
+    # 3. Object Detection (YOLO)
     results = yolo(frame, verbose=False)[0]
     detections = results.boxes.data.cpu().numpy()
     
