@@ -1,30 +1,35 @@
-#  Python & Virtual Environment 
-venv/
-.env/
-.venv/
-env/
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+.venv/
+venv/
+venv_engagement/
+venv_mlp/
+venv310/
 
-#  Large Datasets (WAJIB: Agar file 2.8GB tidak di-upload) 
-dataset/
-*.mat
-*.h5
-*.npy
+# Dataset
+data/train/
+data/val/
+data/test/
+data/raw/
 
-#  AI Models (Weights) 
-# File .pt dan .tflite biasanya besar, lebih baik di-download manual
-models/*.pt
-models/*.tflite
-yolo26n.pt
-
-#  Calibration & Output 
+# Samples
 calibration/samples/
-calibration/*.png
-calibration/*.jpg
 
-#  IDE Settings 
-.vscode/
-.idea/
-.DS_Store
+# Processed Data (Numpy arrays)
+processed_data/X_train.npy
+processed_data_v2_1/X_test_v2_1.npy
+# Catatan: Jika Anda ingin mengabaikan SEMUA file .npy di masa depan, Anda cukup menambahkan: *.npy
+
+# Model files
+models/*.pkl
+
+# Media
+*.jpg
+*.png
+*.mp4
+*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+training/FINAL_MODEL.ipynb

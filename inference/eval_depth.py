@@ -1,3 +1,5 @@
+#inference/eval_depth.py
+
 import numpy as np
 from utils.metrics import rmse, abs_rel, sq_rel, log_rmse, delta_thresholds
 import glob

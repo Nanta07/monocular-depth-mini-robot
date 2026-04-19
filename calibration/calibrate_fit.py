@@ -1,9 +1,11 @@
+# calibration/calibrate_fit.py
+
 import json
 import numpy as np
 from pathlib import Path
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
 
 PAIRS_FILE = Path("calibration/samples/pairs.jsonl")
 OUT_FILE = Path("calibration/calib_params.json")
